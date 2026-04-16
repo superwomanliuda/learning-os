@@ -59,8 +59,13 @@ export NEXT_PUBLIC_API_URL=http://127.0.0.1:8080
 | POST | `/api/sessions` | 创建学习会话 |
 | POST | `/api/events` | 上报 `learning_event` |
 | POST | `/api/videos/import` | 导入 B 站 URL（占位元数据） |
+| POST | `/api/videos/textbook/upload` | 上传电子教材（txt/md/pdf） |
 | PATCH | `/api/videos/{id}/transcript` | 手动粘贴字幕/转写 |
 | POST | `/api/video/ask` | 按片段提问（写 `video_question` 事件） |
+| POST | `/api/video/textbook/ask` | 基于教材提问（写 `textbook_question` 事件） |
+| POST | `/api/video/textbook/lesson` | 生成几分钟 1 对 1 微课题目与脚本 |
+| POST | `/api/video/textbook/tutor` | 教材微课对话回合（返回 speech + board） |
+| POST | `/api/video/tts` | 将老师话术转语音（audio/mpeg） |
 | POST | `/api/homework/hint` | 分层提示（服务端定级，写 `homework_hint_used`） |
 | GET | `/api/reports/session/{sessionId}` | 学情总结（老师可看全部，学生仅自己） |
 | POST | `/api/class/sessions/{id}/confusion` | 课堂「不懂」标记 |
@@ -71,3 +76,4 @@ export NEXT_PUBLIC_API_URL=http://127.0.0.1:8080
 
 - 所有学习行为以 `learning_event` 为主轴；作业提示等级由**服务端**根据已用次数计算（1–4），不依赖前端自报等级。
 - B 站真实标题/字幕抓取未接第三方服务，导入失败或元数据不全时，请用「手动转写」兜底（与文档一致）。
+- 可参考根目录 `.env.example` 配置 `OPENAI_API_KEY`（以及可选 `HTTPS_PROXY`）。

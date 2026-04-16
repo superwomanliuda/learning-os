@@ -5,7 +5,9 @@ import com.learningos.dto.VideoImportRequest;
 import com.learningos.model.VideoAsset;
 import com.learningos.service.VideoService;
 import jakarta.validation.Valid;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -22,6 +24,12 @@ public class VideoController {
     @PostMapping("/import")
     public VideoAsset importVideo(@Valid @RequestBody VideoImportRequest req) {
         return videoService.importVideo(req);
+    }
+
+    @PostMapping(value = "/textbook/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public VideoAsset uploadTextbook(@RequestPart("file") MultipartFile file,
+                                     @RequestPart(value = "title", required = false) String title) {
+        return videoService.uploadTextbook(file, title);
     }
 
     @GetMapping

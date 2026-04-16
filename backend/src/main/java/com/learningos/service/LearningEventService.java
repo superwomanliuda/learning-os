@@ -20,13 +20,16 @@ public class LearningEventService {
     private final LearningEventRepository eventRepository;
     private final LearningSessionRepository sessionRepository;
     private final ObjectMapper objectMapper;
+    private final ObservationService observationService;
 
     public LearningEventService(LearningEventRepository eventRepository,
                                 LearningSessionRepository sessionRepository,
-                                ObjectMapper objectMapper) {
+                                ObjectMapper objectMapper,
+                                ObservationService observationService) {
         this.eventRepository = eventRepository;
         this.sessionRepository = sessionRepository;
         this.objectMapper = objectMapper;
+        this.observationService = observationService;
     }
 
     @Transactional
@@ -49,7 +52,9 @@ public class LearningEventService {
         } catch (JsonProcessingException ex) {
             throw new IllegalArgumentException("payload 无法序列化为 JSON");
         }
-        return eventRepository.save(e);
+        LearningEvent saved = eventRepository.save(e);
+        observationService.generateObservation(saved);
+        return saved;
     }
 
     @Transactional

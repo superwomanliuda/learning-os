@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -11,6 +11,18 @@ export function setToken(token: string) {
 
 export function clearToken() {
   localStorage.removeItem("token");
+  localStorage.removeItem("role");
+  localStorage.removeItem("userName");
+}
+
+export function getRole(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("role");
+}
+
+export function getUserName(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("userName");
 }
 
 export async function api<T = unknown>(
@@ -18,8 +30,9 @@ export async function api<T = unknown>(
   options: RequestInit = {}
 ): Promise<T> {
   const token = getToken();
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+    ...(isFormData ? {} : { "Content-Type": "application/json" }),
     ...(options.headers as Record<string, string>),
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;

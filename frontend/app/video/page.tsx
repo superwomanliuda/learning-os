@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, getToken } from "@/lib/api";
 import { useRouter } from "next/navigation";
 
-type Video = { id: string; title: string; sourceUrl: string; status: string };
+type Video = { id: string; title: string; sourceUrl: string; sourceType?: string; status: string };
 type PracticeQuestion = { question: string; type: string; hint: string };
 
 export default function VideoPage() {
@@ -22,13 +22,9 @@ export default function VideoPage() {
   const [practiceSummary, setPracticeSummary] = useState("");
   const [practiceQuestions, setPracticeQuestions] = useState<PracticeQuestion[]>([]);
   const [msg, setMsg] = useState("");
+  const [importing, setImporting] = useState(false);
 
-  useEffect(() => {
-    if (!getToken()) router.replace("/login");
-    else loadVideos();
-  }, [router]);
-
-  async function loadVideos() {
+  const loadVideos = useCallback(async () => {
     try {
       const list = await api<Video[]>("/api/videos");
       setVideos(list);
@@ -36,21 +32,54 @@ export default function VideoPage() {
     } catch {
       /* ignore */
     }
+  }, [vid]);
+
+  useEffect(() => {
+    if (!getToken()) router.replace("/login");
+    else loadVideos();
+  }, [router, loadVideos]);
+
+  function normalizeBilibiliInput(input: string) {
+    const text = (input || "").trim();
+    if (!text) return "";
+    const bvMatch = text.match(/BV[a-zA-Z0-9]{10}/);
+    if (bvMatch) return `https://www.bilibili.com/video/${bvMatch[0]}/`;
+    const urlMatch = text.match(/https?:\/\/[^\s]+/);
+    return urlMatch ? urlMatch[0] : text;
   }
 
   async function importVideo() {
     setMsg("");
+    const cleaned = normalizeBilibiliInput(url);
+    if (!cleaned) {
+      setMsg("请先粘贴 B 站链接或 BV 号");
+      return;
+    }
+    setImporting(true);
     try {
       const v = await api<Video>("/api/videos/import", {
         method: "POST",
-        body: JSON.stringify({ sourceType: "bilibili", sourceUrl: url }),
+        body: JSON.stringify({ sourceType: "bilibili", sourceUrl: cleaned }),
       });
       setVid(v.id);
+      setUrl(cleaned);
       setMsg("已导入：" + v.title + "（字幕可下方粘贴兜底）");
       loadVideos();
     } catch (e: unknown) {
       setMsg(e instanceof Error ? e.message : "导入失败");
+    } finally {
+      setImporting(false);
     }
+  }
+
+  function extractPageTag(sourceUrl: string) {
+    const m = (sourceUrl || "").match(/[?&]p=(\d+)/);
+    return m ? `P${m[1]}` : null;
+  }
+
+  function formatVideoOption(v: Video) {
+    const page = extractPageTag(v.sourceUrl);
+    return page ? `${v.title} [${page}]` : v.title;
   }
 
   async function saveTranscript() {
@@ -114,19 +143,22 @@ export default function VideoPage() {
 
   return (
     <main>
-      <h1>视频学习（B 站 URL）</h1>
+      <h1>校内课堂巩固</h1>
       <p style={{ color: "var(--muted)" }}>
-        首版解析 BV 号与占位元数据；无字幕时可粘贴转写。提问会写入 video_question 事件。
+        本页用于校内课堂视频巩固复习。教材上传、教材问答、教材微课请前往「自学教材」页面。
       </p>
 
       <div className="card">
         <label>B 站视频链接</label>
         <input value={url} onChange={(e) => setUrl(e.target.value)} />
         <div style={{ marginTop: "0.75rem" }}>
-          <button type="button" onClick={importVideo}>
-            导入
+          <button type="button" onClick={importVideo} disabled={importing}>
+            {importing ? "导入中..." : "导入"}
           </button>
         </div>
+        <p style={{ marginTop: "0.5rem", color: "var(--muted)" }}>
+          支持粘贴「标题 + 链接」或仅 BV 号，系统会自动提取。
+        </p>
       </div>
 
       <div className="card">
@@ -146,7 +178,7 @@ export default function VideoPage() {
           {videos.length === 0 && <option value="">（请先导入）</option>}
           {videos.map((v) => (
             <option key={v.id} value={v.id}>
-              {v.title}
+              {formatVideoOption(v)}
             </option>
           ))}
         </select>

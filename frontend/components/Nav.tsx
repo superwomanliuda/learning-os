@@ -11,9 +11,9 @@ export default function Nav() {
 
   return (
     <nav className="nav">
-      <Link href="/">今日学习</Link>
       <Link href="/class">1对1 上课</Link>
-      <Link href="/video">视频学习</Link>
+      <Link href="/video">校内课堂巩固</Link>
+      <Link href="/textbook">自学教材</Link>
       <Link href="/homework">作业辅导</Link>
       <Link href="/report">学情 / 复盘</Link>
       <span style={{ flex: 1 }} />

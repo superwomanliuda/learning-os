@@ -14,11 +14,15 @@ export default function LoginPage() {
     e.preventDefault();
     setErr("");
     try {
-      const res = await api<{ token: string }>("/api/auth/login", {
+      const res = await api<{ token: string; role: string; name: string; userId: number }>("/api/auth/login", {
         method: "POST",
         body: JSON.stringify({ username, password }),
       });
       setToken(res.token);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("role", res.role);
+        localStorage.setItem("userName", res.name);
+      }
       router.push("/");
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : "登录失败");

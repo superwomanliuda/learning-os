@@ -27,17 +27,20 @@ public class HomeworkService {
     private final LearningSessionRepository sessionRepository;
     private final AiService aiService;
     private final ObjectMapper objectMapper;
+    private final ObservationService observationService;
 
     public HomeworkService(HomeworkAttemptRepository attemptRepository,
                            LearningEventRepository eventRepository,
                            LearningSessionRepository sessionRepository,
                            AiService aiService,
-                           ObjectMapper objectMapper) {
+                           ObjectMapper objectMapper,
+                           ObservationService observationService) {
         this.attemptRepository = attemptRepository;
         this.eventRepository = eventRepository;
         this.sessionRepository = sessionRepository;
         this.aiService = aiService;
         this.objectMapper = objectMapper;
+        this.observationService = observationService;
     }
 
     /**
@@ -91,7 +94,8 @@ public class HomeworkService {
         } catch (JsonProcessingException e) {
             ev.setPayload("{}");
         }
-        eventRepository.save(ev);
+        LearningEvent saved = eventRepository.save(ev);
+        observationService.generateObservation(saved);
 
         return new HomeworkHintResponse(a.getId(), level, a.getHintCount(), reply);
     }

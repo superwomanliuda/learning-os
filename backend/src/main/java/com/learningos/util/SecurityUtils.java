@@ -23,4 +23,8 @@ public final class SecurityUtils {
         }
         return p;
     }
+
+    public static String currentRole() {
+        return currentPrincipal().getRole();
+    }
 }
