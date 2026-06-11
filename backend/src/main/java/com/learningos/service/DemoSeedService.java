@@ -377,4 +377,311 @@ public class DemoSeedService {
             });
         }
     }
+
+    // ───────────────────────────────────────────────────────────────────────────
+    // 数轴视频课 case：基于真实 17 分钟讲课视频 + 3 个虚拟学生人设
+    // 老师课程节奏（来自 transcript.json）：
+    //   00:00 有理数分类
+    //   01:30 数轴引入（A/B 两点是正负数？）
+    //   03:00 画数轴步骤
+    //   05:00 数轴定义（三要素）
+    //   06:00 5 条性质（数形结合）
+    //   09:30 判断 8 个图哪些是数轴
+    //   10:30 例 1：指出 ABC 表示什么数
+    //   11:30 例 2：画点 -1.5 / -3/5 / -3又1/2
+    //   13:00 例 3：到 A 距离 3 的点（变式）
+    //   14:30 例 4：线段覆盖整点（迁移）
+    // ───────────────────────────────────────────────────────────────────────────
+
+    @Transactional
+    public Map<String, Object> seedNumberLineCase() {
+        cleanDemoData();
+
+        User xiaoming = createStudent("demo_xiaoming", "小明（步骤断裂型）", "初一");
+        User xiaohong = createStudent("demo_xiaohong", "小红（提示依赖型）", "初一");
+        User xiaohua = createStudent("demo_xiaohua", "小华（表面理解型）", "初一");
+
+        seedXiaomingNumberLine(xiaoming);
+        seedXiaohongNumberLine(xiaohong);
+        seedXiaohuaNumberLine(xiaohua);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("message", "数轴课案例数据已加载（基于真实 17 分钟视频）");
+        result.put("students", List.of(
+            Map.of("name", "小明（步骤断裂型）", "id", xiaoming.getId()),
+            Map.of("name", "小红（提示依赖型）", "id", xiaohong.getId()),
+            Map.of("name", "小华（表面理解型）", "id", xiaohua.getId())
+        ));
+        result.put("lessonTitle", "有理数与数轴（17 分钟同步课）");
+        return result;
+    }
+
+    private String createClassSession(Long studentId, String title) {
+        LearningSession s = new LearningSession();
+        s.setId(UUID.randomUUID().toString());
+        s.setStudentId(studentId);
+        s.setType(LearningSession.SessionType.CLASS);
+        s.setTitle(title);
+        s.setStartedAt(LocalDateTime.now().minusHours(2));
+        s.setEndedAt(LocalDateTime.now().minusMinutes(30));
+        s.setDurationSec(1020);  // 17 分钟
+        s.setStatus(LearningSession.Status.COMPLETED);
+        return sessionRepository.save(s).getId();
+    }
+
+    /**
+     * 小明：步骤断裂 + 高认知负荷
+     * 例 1 第二问做对，例 2 -3又1/2 卡住，例 3 距离题答错，例 4 完全卡住求助
+     */
+    private void seedXiaomingNumberLine(User student) {
+        String sid = createClassSession(student.getId(), "有理数与数轴 同步课");
+
+        // 02:00 数轴引入时跟得上但状态紧张
+        ev(student.getId(), sid, "student_speak", 122,
+            "{\"message\":\"老师慢一点，我先记一下\"}");
+        // 03:00 画数轴步骤时停顿
+        ev(student.getId(), sid, "hesitation", 215,
+            "{\"pause_sec\":42,\"step\":\"画数轴\",\"context\":\"老师讲到第3步选单位长度时跟不上\"}");
+        obsV2(student.getId(), sid, "hesitation", "system", 0.9,
+            "学生在画数轴步骤讲解时停顿 42 秒",
+            "{\"event\":\"hesitation\",\"step\":\"画数轴\",\"pause_sec\":42}");
+        ev(student.getId(), sid, "student_speak", 220,
+            "{\"message\":\"我跟不上节奏了\"}");
+        obsV2(student.getId(), sid, "high_load_signal", "student_response", 0.85,
+            "学生主动表达跟不上节奏",
+            "{\"message\":\"我跟不上节奏了\"}");
+
+        // 10:30 例 1：A=-2 ✓，B=-0.5 答错为 0，C=3 ✓
+        ev(student.getId(), sid, "step_submit", 600,
+            "{\"step\":1,\"content\":\"A 是 -2\",\"correct\":true,\"duration_sec\":15}");
+        ev(student.getId(), sid, "step_submit", 615,
+            "{\"step\":2,\"content\":\"B 是 0\",\"correct\":false,\"error_step\":2,\"duration_sec\":12}");
+        obsV2(student.getId(), sid, "step_error", "system", 0.9,
+            "例 1：B 点位置答错（写为 0，正确应是 -0.5）",
+            "{\"step\":2,\"answer\":\"0\",\"expected\":\"-0.5\"}");
+        ev(student.getId(), sid, "hesitation", 645,
+            "{\"pause_sec\":33,\"step\":2,\"context\":\"被老师指出错误后愣住\"}");
+        obsV2(student.getId(), sid, "hesitation", "system", 0.85,
+            "例 1 第二问出错后停顿 33 秒",
+            "{\"step\":2,\"pause_sec\":33}");
+        ev(student.getId(), sid, "help_request", 650,
+            "{\"message\":\"老师 B 在这位置到底是什么数？\",\"within_sec\":35,\"step\":2}");
+        obsV2(student.getId(), sid, "hint_dependency_signal", "student_response", 0.8,
+            "例 1 第二问后求助",
+            "{\"message\":\"老师 B 在这位置到底是什么数\"}");
+        ev(student.getId(), sid, "step_submit", 670,
+            "{\"step\":3,\"content\":\"C 是 3\",\"correct\":true,\"duration_sec\":10}");
+
+        // 11:30 例 2：画点 6 个数，-3又1/2 出错
+        ev(student.getId(), sid, "step_submit", 695,
+            "{\"step\":1,\"content\":\"2 已画\",\"correct\":true}");
+        ev(student.getId(), sid, "step_submit", 705,
+            "{\"step\":2,\"content\":\"-1.5 已画\",\"correct\":true}");
+        ev(student.getId(), sid, "step_submit", 715,
+            "{\"step\":3,\"content\":\"0 已画\",\"correct\":true}");
+        ev(student.getId(), sid, "step_submit", 728,
+            "{\"step\":4,\"content\":\"-3/5 在 0 和 -1 之间\",\"correct\":true}");
+        ev(student.getId(), sid, "step_submit", 740,
+            "{\"step\":5,\"content\":\"1.5 已画\",\"correct\":true}");
+        ev(student.getId(), sid, "step_submit", 758,
+            "{\"step\":6,\"content\":\"-3又1/2 画在 -3 那点\",\"correct\":false,\"error_step\":6,\"duration_sec\":18}");
+        obsV2(student.getId(), sid, "step_error", "system", 0.9,
+            "例 2：把 -3又1/2 错画在 -3 整数点（应在 -3 和 -4 之间）",
+            "{\"step\":6,\"answer\":\"-3\",\"expected\":\"-3.5\"}");
+        ev(student.getId(), sid, "hesitation", 770,
+            "{\"pause_sec\":35,\"step\":6}");
+        obsV2(student.getId(), sid, "hesitation", "system", 0.85,
+            "例 2 -3又1/2 出错后停顿 35 秒",
+            "{\"step\":6,\"pause_sec\":35}");
+        ev(student.getId(), sid, "step_revision", 800,
+            "{\"step\":6,\"previous\":\"-3\",\"new_content\":\"-3和-4之间\"}");
+
+        // 13:00 例 3 距离题
+        ev(student.getId(), sid, "step_submit", 820,
+            "{\"step\":1,\"content\":\"距离 3 就是 +3，所以是 5\",\"correct\":false,\"error_step\":1}");
+        obsV2(student.getId(), sid, "step_error", "system", 0.85,
+            "例 3：只想到正方向（5），漏了负方向（-1）",
+            "{\"answer\":\"5\",\"expected\":\"-1 或 5\"}");
+        ev(student.getId(), sid, "hesitation", 855,
+            "{\"pause_sec\":58,\"step\":1,\"context\":\"老师追问还有别的吗\"}");
+        obsV2(student.getId(), sid, "hesitation", "system", 0.9,
+            "例 3 老师追问后停顿 58 秒未答",
+            "{\"pause_sec\":58}");
+
+        // 14:30 例 4 线段覆盖（最难）
+        ev(student.getId(), sid, "help_request", 880,
+            "{\"message\":\"我不知道怎么数\",\"within_sec\":15,\"step\":1}");
+        obsV2(student.getId(), sid, "hint_dependency_signal", "student_response", 0.85,
+            "例 4 开始即求助",
+            "{\"message\":\"我不知道怎么数\"}");
+        ev(student.getId(), sid, "consecutive_error", 920,
+            "{\"count\":2,\"context\":\"老师提示后还是答 2011\"}");
+        obsV2(student.getId(), sid, "high_load_signal", "system", 0.85,
+            "例 4 出现连续错误 2 次（提示后仍答错）",
+            "{\"consecutive_error_count\":2}");
+    }
+
+    /**
+     * 小红：提示依赖
+     * 几乎每个例题第一时间求助，老师讲解后能跟上
+     */
+    private void seedXiaohongNumberLine(User student) {
+        String sid = createClassSession(student.getId(), "有理数与数轴 同步课");
+
+        // 02:00 数轴引入即求助
+        ev(student.getId(), sid, "help_request", 122,
+            "{\"message\":\"老师我不会，a 和 b 怎么看？\",\"within_sec\":2,\"step\":1}");
+        obsV2(student.getId(), sid, "start_difficulty_signal", "student_response", 0.85,
+            "数轴引入第一题即求助（2 秒内）",
+            "{\"within_sec\":2,\"message\":\"老师我不会\"}");
+
+        // 03:00 画数轴步骤一开始就求助
+        ev(student.getId(), sid, "help_request", 215,
+            "{\"message\":\"画数轴怎么开始啊\",\"within_sec\":5}");
+        obsV2(student.getId(), sid, "start_difficulty_signal", "student_response", 0.85,
+            "画数轴步骤讲解开始即求助（5 秒内）",
+            "{\"within_sec\":5,\"message\":\"画数轴怎么开始啊\"}");
+
+        // 06:00 数形结合讲解时
+        ev(student.getId(), sid, "help_request", 365,
+            "{\"message\":\"数形结合是啥意思\",\"within_sec\":8}");
+        obsV2(student.getId(), sid, "hint_dependency_signal", "student_response", 0.8,
+            "数形结合讲解时求助",
+            "{\"message\":\"数形结合是啥意思\"}");
+
+        // 09:30 判断题求助
+        ev(student.getId(), sid, "help_request", 580,
+            "{\"message\":\"老师我看不懂哪个是哪个\",\"within_sec\":10}");
+        obsV2(student.getId(), sid, "hint_dependency_signal", "student_response", 0.8,
+            "判断题求助",
+            "{\"message\":\"老师我看不懂\"}");
+
+        // 10:30 例 1
+        ev(student.getId(), sid, "help_request", 605,
+            "{\"message\":\"例 1 怎么做\",\"within_sec\":3,\"step\":1}");
+        obsV2(student.getId(), sid, "hint_dependency_signal", "student_response", 0.85,
+            "例 1 开始即求助（3 秒内）",
+            "{\"within_sec\":3}");
+        ev(student.getId(), sid, "step_submit", 640,
+            "{\"step\":1,\"content\":\"A=-2 B=-0.5 C=3\",\"correct\":true,\"duration_sec\":35}");
+
+        // 11:30 例 2
+        ev(student.getId(), sid, "help_request", 695,
+            "{\"message\":\"-3/5 怎么画啊\",\"within_sec\":4}");
+        obsV2(student.getId(), sid, "hint_dependency_signal", "student_response", 0.8,
+            "例 2 开始即求助",
+            "{\"within_sec\":4}");
+        ev(student.getId(), sid, "step_submit", 745,
+            "{\"step\":1,\"content\":\"按老师讲的画完了\",\"correct\":true}");
+
+        // 13:00 例 3
+        ev(student.getId(), sid, "help_request", 785,
+            "{\"message\":\"距离 3 是什么意思\",\"within_sec\":5}");
+        obsV2(student.getId(), sid, "hint_dependency_signal", "student_response", 0.8,
+            "例 3 开始即求助",
+            "{\"within_sec\":5}");
+
+        // 14:30 例 4
+        ev(student.getId(), sid, "help_request", 875,
+            "{\"message\":\"老师这道我完全不会\",\"within_sec\":6}");
+        obsV2(student.getId(), sid, "hint_dependency_signal", "student_response", 0.85,
+            "例 4 开始即求助",
+            "{\"within_sec\":6}");
+    }
+
+    /**
+     * 小华：表面理解
+     * 答题正确率高但解释含混；变式题（例 3、例 4）失败
+     */
+    private void seedXiaohuaNumberLine(User student) {
+        String sid = createClassSession(student.getId(), "有理数与数轴 同步课");
+
+        // 02:00 数轴引入：很快表示懂了
+        ev(student.getId(), sid, "student_speak", 125,
+            "{\"message\":\"老师我懂了\"}");
+
+        // 06:00 老师讲数形结合后让学生解释
+        ev(student.getId(), sid, "explanation_response", 365,
+            "{\"content\":\"数形结合就是数和形\",\"quality\":\"vague\"}");
+        obsV2(student.getId(), sid, "vague_understanding_signal", "student_response", 0.85,
+            "解释数形结合时回答含混（'就是数和形'）",
+            "{\"content\":\"数形结合就是数和形\"}");
+
+        // 10:30 例 1 全部做对
+        ev(student.getId(), sid, "step_submit", 605,
+            "{\"step\":1,\"content\":\"A=-2\",\"correct\":true,\"duration_sec\":8}");
+        ev(student.getId(), sid, "step_submit", 615,
+            "{\"step\":2,\"content\":\"B=-0.5\",\"correct\":true,\"duration_sec\":7}");
+        ev(student.getId(), sid, "step_submit", 625,
+            "{\"step\":3,\"content\":\"C=3\",\"correct\":true,\"duration_sec\":5}");
+
+        // 老师追问：为什么 B 是 -0.5
+        ev(student.getId(), sid, "explanation_response", 645,
+            "{\"content\":\"反正就是这个位置\",\"quality\":\"vague\"}");
+        obsV2(student.getId(), sid, "vague_understanding_signal", "student_response", 0.9,
+            "例 1 解释含混（'反正就是这个位置'）",
+            "{\"content\":\"反正就是这个位置\"}");
+
+        // 11:30 例 2 全部做对
+        ev(student.getId(), sid, "step_submit", 695,
+            "{\"step\":1,\"content\":\"6 个点都画完了\",\"correct\":true,\"duration_sec\":40}");
+
+        // 老师追问：为什么 -3又1/2 在 -3 和 -4 之间
+        ev(student.getId(), sid, "explanation_response", 750,
+            "{\"content\":\"差不多就在那\",\"quality\":\"vague\"}");
+        obsV2(student.getId(), sid, "vague_understanding_signal", "student_response", 0.9,
+            "例 2 解释含混（'差不多就在那'）",
+            "{\"content\":\"差不多就在那\"}");
+
+        // 13:00 例 3 变式题：只答 5（漏掉 -1）
+        ev(student.getId(), sid, "variant_question_submit", 800,
+            "{\"question\":\"到 A 距离 3 的点\",\"answer\":\"5\",\"correct\":false}");
+        obsV2(student.getId(), sid, "transfer_signal", "system", 0.9,
+            "例 3 变式题：只想到 5，漏 -1",
+            "{\"answer\":\"5\",\"expected\":\"-1 或 5\"}");
+        ev(student.getId(), sid, "student_speak", 840,
+            "{\"message\":\"我没想到还有 -1\"}");
+
+        // 14:30 例 4 迁移题：直接答 2011（错）
+        ev(student.getId(), sid, "variant_question_submit", 880,
+            "{\"question\":\"线段长 2011 cm 覆盖整点数\",\"answer\":\"2011\",\"correct\":false}");
+        obsV2(student.getId(), sid, "transfer_signal", "system", 0.9,
+            "例 4 迁移题：直接答 2011（未考虑端点位置）",
+            "{\"answer\":\"2011\",\"expected\":\"2011 或 2012\"}");
+    }
+
+    /** 数轴课 seed 专用：写 LearningEvent（payload 直接传 JSON 字符串，调用方控制格式） */
+    private void ev(Long studentId, String sessionId, String eventType, int timestampSec, String payloadJson) {
+        LearningEvent e = new LearningEvent();
+        e.setStudentId(studentId);
+        e.setSessionId(sessionId);
+        e.setEventType(eventType);
+        e.setTimestampSec(timestampSec);
+        e.setPayload(payloadJson);
+        learningEventRepository.save(e);
+    }
+
+    /** v2 字段齐全的 observation 入库 */
+    private void obsV2(Long studentId, String sessionId, String observationType,
+                       String source, double confidence, String content, String evidenceJson) {
+        Observation o = new Observation();
+        o.setStudentId(studentId);
+        o.setSessionId(sessionId);
+        o.setObservationType(observationType);
+        o.setSource(source);
+        o.setConfidence(confidence);
+        o.setContent(content);
+        o.setEvidence(evidenceJson);
+        // 兼容旧字段
+        o.setType("teacher_note".equals(source) ? "teacher" : "system");
+        o.setCategory(deriveCategoryFromObsType(observationType));
+        observationRepository.save(o);
+    }
+
+    private String deriveCategoryFromObsType(String t) {
+        if (t == null) return "behavior";
+        if (t.contains("hesitation") || t.contains("high_load") || t.contains("frustration")) return "hesitation";
+        if (t.contains("step_error") || t.contains("transfer")) return "step_error";
+        return "behavior";
+    }
 }

@@ -42,22 +42,47 @@ public class AiService {
             """;
 
     private final WebClient webClient;
+    private final WebClient groqClient;
+    private final WebClient diagnosticClient;
     private final ObjectMapper objectMapper;
     private final String model;
     private final int maxTokens;
     private final String apiKey;
+    private final String groqApiKey;
+    private final String groqModel;
+    private final String diagnosticApiKey;
+    private final String diagnosticModel;
+    private final int diagnosticMaxTokens;
 
     public AiService(ObjectMapper objectMapper,
                      @Value("${ai.openai.base-url}") String baseUrl,
                      @Value("${ai.openai.api-key}") String apiKey,
                      @Value("${ai.openai.model}") String model,
-                     @Value("${ai.openai.max-tokens:1024}") int maxTokens) {
+                     @Value("${ai.openai.max-tokens:1024}") int maxTokens,
+                     @Value("${ai.groq.base-url}") String groqBaseUrl,
+                     @Value("${ai.groq.api-key}") String groqApiKey,
+                     @Value("${ai.groq.model}") String groqModel,
+                     @Value("${ai.diagnostic.base-url}") String diagnosticBaseUrl,
+                     @Value("${ai.diagnostic.api-key}") String diagnosticApiKey,
+                     @Value("${ai.diagnostic.model}") String diagnosticModel,
+                     @Value("${ai.diagnostic.max-tokens:2048}") int diagnosticMaxTokens) {
         this.objectMapper = objectMapper;
         this.apiKey = apiKey;
         this.model = model;
         this.maxTokens = maxTokens;
+        this.groqApiKey = groqApiKey;
+        this.groqModel = groqModel;
+        this.diagnosticApiKey = diagnosticApiKey;
+        this.diagnosticModel = diagnosticModel;
+        this.diagnosticMaxTokens = diagnosticMaxTokens;
         this.webClient = WebClient.builder()
                 .baseUrl(baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl)
+                .build();
+        this.groqClient = WebClient.builder()
+                .baseUrl(groqBaseUrl.endsWith("/") ? groqBaseUrl.substring(0, groqBaseUrl.length() - 1) : groqBaseUrl)
+                .build();
+        this.diagnosticClient = WebClient.builder()
+                .baseUrl(diagnosticBaseUrl.endsWith("/") ? diagnosticBaseUrl.substring(0, diagnosticBaseUrl.length() - 1) : diagnosticBaseUrl)
                 .build();
     }
 
@@ -147,7 +172,7 @@ public class AiService {
 
                 要求：基于证据说话，不要空泛评价；不要用夸张词汇；每条尽量引用具体行为（如「课堂中标记不懂 2 次」）。
                 """.formatted(eventsSummary, homeworkSummary, videoSummary);
-        return chat(SYSTEM_GLOBAL, user, "1. 卡点：待补充学习过程数据。\n2. 提示依赖：数据不足。\n3. 错误模式：待观察。\n4. 建议：继续收集课堂标记与作业提示记录。");
+        return chatDiagnostic(SYSTEM_GLOBAL, user, "1. 卡点：待补充学习过程数据。\n2. 提示依赖：数据不足。\n3. 错误模式：待观察。\n4. 建议：继续收集课堂标记与作业提示记录。");
     }
 
     public String refuseFullAnswer() {
@@ -529,18 +554,43 @@ public class AiService {
             log.warn("未配置有效 OPENAI_API_KEY，使用本地兜底回复");
             return fallback;
         }
+        return callChat(webClient, apiKey, model, maxTokens, system, user, fallback);
+    }
+
+    // 第二层：Groq + Llama 3.1 8B，用于 observation 结构化
+    private String chatGroq(String system, String user, String fallback) {
+        if (groqApiKey == null || groqApiKey.isBlank() || "your-groq-api-key".equals(groqApiKey)) {
+            log.warn("未配置有效 GROQ_API_KEY，使用本地兜底回复");
+            return fallback;
+        }
+        return callChat(groqClient, groqApiKey, groqModel, 1024, system, user, fallback);
+    }
+
+    // 第四层：GPT-5.4，用于 pattern 分析和 strategy 生成
+    private String chatDiagnostic(String system, String user, String fallback) {
+        if (diagnosticApiKey == null || diagnosticApiKey.isBlank() || "your-diagnostic-api-key".equals(diagnosticApiKey)) {
+            log.warn("未配置有效 DIAGNOSTIC_API_KEY，使用本地兜底回复");
+            return fallback;
+        }
+        return callChat(diagnosticClient, diagnosticApiKey, diagnosticModel, diagnosticMaxTokens, system, user, fallback);
+    }
+
+    private String callChat(WebClient client, String key, String mdl, int tokens,
+                            String system, String user, String fallback) {
         try {
+            // GPT-5.4 使用 max_completion_tokens，其他模型使用 max_tokens
+            String tokenKey = mdl.startsWith("gpt-5") ? "max_completion_tokens" : "max_tokens";
             Map<String, Object> body = Map.of(
-                    "model", model,
-                    "max_tokens", maxTokens,
+                    "model", mdl,
+                    tokenKey, tokens,
                     "messages", List.of(
                             Map.of("role", "system", "content", system),
                             Map.of("role", "user", "content", user)
                     )
             );
-            String raw = webClient.post()
+            String raw = client.post()
                     .uri("/chat/completions")
-                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey)
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + key)
                     .contentType(MediaType.APPLICATION_JSON)
                     .bodyValue(body)
                     .retrieve()
@@ -548,17 +598,19 @@ public class AiService {
                     .timeout(Duration.ofSeconds(60))
                     .onErrorResume(e -> {
                         log.warn("LLM 调用失败: {}", e.getMessage());
+                        if (e instanceof org.springframework.web.reactive.function.client.WebClientResponseException ex) {
+                            log.warn("LLM 错误详情: {}", ex.getResponseBodyAsString());
+                        }
                         return Mono.just("");
                     })
                     .block();
-            if (raw == null || raw.isBlank()) {
-                return fallback;
-            }
+            if (raw == null || raw.isBlank()) return fallback;
             JsonNode root = objectMapper.readTree(raw);
+            // 打印实际使用的模型名，方便验证
+            String actualModel = root.path("model").asText("unknown");
+            log.info("[AI调用] 请求模型: {} | 实际返回模型: {}", mdl, actualModel);
             JsonNode choices = root.path("choices");
-            if (!choices.isArray() || choices.isEmpty()) {
-                return fallback;
-            }
+            if (!choices.isArray() || choices.isEmpty()) return fallback;
             String content = choices.get(0).path("message").path("content").asText("");
             return content.isBlank() ? fallback : content.trim();
         } catch (Exception e) {
@@ -980,7 +1032,7 @@ public class AiService {
                 ruleEvidence == null ? "规则证据支持形成趋势" : ruleEvidence.replace("\"", "'")
         );
 
-        String raw = chat(SYSTEM_GLOBAL, prompt, fallback);
+        String raw = chatDiagnostic(SYSTEM_GLOBAL, prompt, fallback);
         try {
             JsonNode node = objectMapper.readTree(raw.trim()
                     .replaceFirst("(?s)^```json\\s*", "").replaceFirst("(?s)\\s*```$", ""));
@@ -1044,7 +1096,7 @@ public class AiService {
                 }
                 """;
 
-        String raw = chat(SYSTEM_GLOBAL, prompt, fallback);
+        String raw = chatDiagnostic(SYSTEM_GLOBAL, prompt, fallback);
         try {
             JsonNode node = objectMapper.readTree(raw.trim()
                     .replaceFirst("(?s)^```json\\s*", "").replaceFirst("(?s)\\s*```$", ""));
@@ -1092,5 +1144,220 @@ public class AiService {
                 .limit(max)
                 .map(Map.Entry::getKey)
                 .toList();
+    }
+
+    // ===================== v2 新方法 =====================
+
+    /**
+     * v2: 基于 Pattern 生成教育解释 Insight。
+     * 输出 JSON: {insight_text, possible_causes:[], teaching_implications:[], confidence}
+     */
+    public Map<String, Object> generateInsight(String patternType, String evidenceSummary, List<String> observationSamples) {
+        String samples = (observationSamples == null || observationSamples.isEmpty())
+                ? "（无）"
+                : String.join("\n- ", observationSamples.stream().limit(8).toList());
+        String prompt = """
+                你是懂初中数学教学和青少年学习心理的教学分析助理。
+                请根据候选 Pattern 和证据，生成教育解释 Insight。
+
+                Pattern 类型：%s
+                证据摘要：%s
+                观察样本：
+                - %s
+
+                要求：
+                - 不要停留在表面现象，解释问题本质可能是什么
+                - 说明如果继续原教学方式可能有什么风险
+                - 必须用"可能"、"更像是"等谨慎措辞，输出需要老师确认
+                - 不超过 150 字
+
+                输出 JSON（严格只输出 JSON）：
+                {
+                  "insight_text": "...",
+                  "possible_causes": ["原因1","原因2"],
+                  "teaching_implications": ["教学影响1","教学影响2"],
+                  "confidence": 0.7
+                }
+                """.formatted(
+                patternType == null ? "unknown" : patternType,
+                evidenceSummary == null ? "（无）" : evidenceSummary,
+                samples);
+
+        String fallback = """
+                {
+                  "insight_text": "学生在 %s 维度反复出现信号，建议老师确认是真实问题还是阶段性现象。",
+                  "possible_causes": ["阶段性反应","知识点不熟"],
+                  "teaching_implications": ["建议先确认再调整教学策略"],
+                  "confidence": 0.6
+                }
+                """.formatted(patternType == null ? "未知" : patternType);
+
+        String raw = chatDiagnostic(SYSTEM_GLOBAL, prompt, fallback);
+        try {
+            JsonNode node = objectMapper.readTree(stripJsonFence(raw));
+            Map<String, Object> out = new HashMap<>();
+            out.put("insight_text", node.path("insight_text").asText(""));
+            List<String> causes = new ArrayList<>();
+            node.path("possible_causes").forEach(n -> causes.add(n.asText()));
+            out.put("possible_causes", causes);
+            List<String> impls = new ArrayList<>();
+            node.path("teaching_implications").forEach(n -> impls.add(n.asText()));
+            out.put("teaching_implications", impls);
+            out.put("confidence", Math.max(0, Math.min(1, node.path("confidence").asDouble(0.6))));
+            return out;
+        } catch (Exception e) {
+            log.warn("generateInsight parse failed: {}", raw);
+            return Map.of(
+                    "insight_text", raw,
+                    "possible_causes", List.of(),
+                    "teaching_implications", List.of(),
+                    "confidence", 0.5
+            );
+        }
+    }
+
+    /**
+     * v2: 基于 confirmed Pattern + Insight 生成下节课教学决策。
+     * 输出 JSON: {lesson_focus, practice_policy, interaction_policy, material_policy, difficulty_policy}
+     */
+    public Map<String, Object> generateTeachingDecision(
+            List<String> patternTypes,
+            List<String> insightTexts,
+            String teacherFeedbackHint,
+            String studentProfileHint) {
+        String patterns = (patternTypes == null || patternTypes.isEmpty()) ? "（暂无）" : String.join("、", patternTypes);
+        String insights = (insightTexts == null || insightTexts.isEmpty())
+                ? "（暂无）"
+                : String.join("\n- ", insightTexts.stream().limit(5).toList());
+        String prompt = """
+                你是初中数学一对一教学设计专家。
+                请根据已确认或部分确认的 Pattern、Insight、老师反馈、学生画像，生成下一节课教学决策。
+                不要直接生成题目，只输出教学方向。
+
+                已确认 Pattern：%s
+                Insight：
+                - %s
+                老师历史偏好/反馈：%s
+                学生画像提示：%s
+
+                输出 JSON（严格只输出 JSON）：
+                {
+                  "lesson_focus": "本节课要解决的真问题（一句话）",
+                  "practice_policy": "练习策略（少量分步题/变式题/半成品题等）",
+                  "interaction_policy": "互动策略（每步追问/复述/自检等）",
+                  "material_policy": "材料策略（路线图/天平图示/对比表等）",
+                  "difficulty_policy": "难度策略（降低起步/保持/提升）",
+                  "reason": "为什么这样设计"
+                }
+                """.formatted(
+                patterns,
+                insights,
+                teacherFeedbackHint == null || teacherFeedbackHint.isBlank() ? "（无）" : teacherFeedbackHint,
+                studentProfileHint == null || studentProfileHint.isBlank() ? "（无）" : studentProfileHint);
+
+        String fallback = """
+                {
+                  "lesson_focus": "围绕已确认的学生问题做精准训练",
+                  "practice_policy": "少量分步题，先建立框架再加难度",
+                  "interaction_policy": "每步追问为什么，避免直接给步骤",
+                  "material_policy": "用路线图或对比图示外化思考",
+                  "difficulty_policy": "降低起步难度，逐步提升",
+                  "reason": "保守起步，先稳住学生节奏"
+                }
+                """;
+        String raw = chatDiagnostic(SYSTEM_GLOBAL, prompt, fallback);
+        try {
+            JsonNode node = objectMapper.readTree(stripJsonFence(raw));
+            Map<String, Object> out = new HashMap<>();
+            out.put("lesson_focus", node.path("lesson_focus").asText(""));
+            out.put("practice_policy", node.path("practice_policy").asText(""));
+            out.put("interaction_policy", node.path("interaction_policy").asText(""));
+            out.put("material_policy", node.path("material_policy").asText(""));
+            out.put("difficulty_policy", node.path("difficulty_policy").asText(""));
+            out.put("reason", node.path("reason").asText(""));
+            return out;
+        } catch (Exception e) {
+            log.warn("generateTeachingDecision parse failed: {}", raw);
+            return Map.of(
+                    "lesson_focus", "需要更多数据",
+                    "practice_policy", "维持现有节奏",
+                    "interaction_policy", "保持开放追问",
+                    "material_policy", "暂不变更",
+                    "difficulty_policy", "保持",
+                    "reason", "数据不足，保守输出"
+            );
+        }
+    }
+
+    /**
+     * v2: 把老师自然语言备注抽成多条 observation 证据。
+     * 用主档（GPT-4o-mini）即可，不需要重档。
+     * 输出 JSON: {observations: [{observation_type, content, confidence}]}
+     */
+    public List<Map<String, Object>> extractTeacherNoteEvidence(String teacherNote) {
+        if (teacherNote == null || teacherNote.isBlank()) {
+            return List.of();
+        }
+        String prompt = """
+                你是结构化教学观察抽取工具。从老师的一段自然语言备注里，抽取若干条事实性观察。
+                只输出 JSON，不要解释。
+
+                老师备注："%s"
+
+                允许的 observation_type：
+                hesitation / step_error / repeated_error / hint_dependency_signal /
+                confirmation_dependency_signal / concept_explanation_failure /
+                vague_understanding_signal / expression_difficulty_signal /
+                start_difficulty_signal / transfer_signal / skip_steps_signal /
+                high_load_signal / frustration_signal / modeling_entry_difficulty_signal /
+                surface_understanding_signal
+
+                规则：
+                - 不要输出 pattern 或诊断结论
+                - 只能说"观察到什么"
+                - 每条 confidence 0.0-1.0
+                - 最多输出 4 条
+                - 老师如果说"他不是X"，是否定信号，type 用对应否定标签或忽略
+
+                输出 JSON 格式：
+                {
+                  "observations": [
+                    {"observation_type":"...","content":"基于老师原话的简短描述","confidence":0.85}
+                  ]
+                }
+                """.formatted(teacherNote.replace("\"", "'"));
+
+        String raw = chat(SYSTEM_GLOBAL, prompt,
+                "{\"observations\":[]}");
+        try {
+            JsonNode node = objectMapper.readTree(stripJsonFence(raw));
+            List<Map<String, Object>> out = new ArrayList<>();
+            JsonNode arr = node.path("observations");
+            if (!arr.isArray()) return List.of();
+            for (JsonNode item : arr) {
+                String type = item.path("observation_type").asText("").trim();
+                String content = item.path("content").asText("").trim();
+                if (type.isBlank() || content.isBlank()) continue;
+                double conf = Math.max(0, Math.min(1, item.path("confidence").asDouble(0.7)));
+                out.add(Map.of(
+                        "observation_type", type,
+                        "content", content,
+                        "confidence", conf
+                ));
+                if (out.size() >= 4) break;
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("extractTeacherNoteEvidence parse failed: {}", raw);
+            return List.of();
+        }
+    }
+
+    private String stripJsonFence(String raw) {
+        if (raw == null) return "{}";
+        return raw.trim()
+                .replaceFirst("(?s)^```json\\s*", "")
+                .replaceFirst("(?s)^```\\s*", "")
+                .replaceFirst("(?s)\\s*```$", "");
     }
 }

@@ -1,0 +1,52 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/learning_os?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+    username: root
+    password: YOUR_MYSQL_PASSWORD_HERE
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        format_sql: true
+  jackson:
+    time-zone: Asia/Shanghai
+    date-format: yyyy-MM-dd HH:mm:ss
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
+
+jwt:
+  secret: learning-os-demo-secret-key-must-be-at-least-256-bits-long-for-hs256
+  expiration: 86400000 # 24 hours in ms
+
+ai:
+  # 主档：学生侧高频场景（作业提示/对话/老师备注抽证据/AI 助教追问）
+  openai:
+    api-key: ${DEEPSEEK_API_KEY:your-deepseek-api-key-here}
+    base-url: https://api.deepseek.com/v1
+    model: deepseek-chat
+    max-tokens: 1024
+  # 轻档：observation 结构化（Groq + Llama 8B 免费档）
+  groq:
+    api-key: ${GROQ_API_KEY:your-groq-api-key-here}
+    base-url: https://api.groq.com/openai/v1
+    model: llama-3.1-8b-instant
+    max-tokens: 1024
+  # 重档：诊断 + 课件生成（pattern AI 评估、insight、teaching decision、lesson kit）
+  diagnostic:
+    api-key: ${DEEPSEEK_API_KEY:your-deepseek-api-key-here}
+    base-url: https://api.deepseek.com/v1
+    model: deepseek-chat
+    max-tokens: 2048
+
+logging:
+  level:
+    com.learningos: DEBUG

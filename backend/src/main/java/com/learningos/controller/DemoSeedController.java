@@ -21,4 +21,10 @@ public class DemoSeedController {
     public Map<String, Object> seed() {
         return demoSeedService.seed();
     }
+
+    @PostMapping("/seed-numberline")
+    public Map<String, Object> seedNumberLine() {
+        return demoSeedService.seedNumberLineCase();
+    }
 }
+
